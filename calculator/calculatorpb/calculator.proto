@@ -17,7 +17,40 @@ message SumResponse {
     int64 sum_result = 1;
 }
 
+message PrimeRequest {
+    int64 number = 1;
+}
+
+message PrimeResponse {
+    int64 prime_result = 1;
+}
+
+message ComputeAverageRequest {
+    int64 number = 1;
+}
+
+message ComputeAverageResponse {
+    float average_result = 1;
+}
+
+message FindMaximumRequest {
+    int64 number = 1;
+}
+
+message FindMaximumResponse {
+    int64 max_result = 1;
+}
+
 service CalculatorService {
     // Unary
     rpc Sum(SumRequest) returns (SumResponse) {};
+
+    // Server Streaming
+    rpc PrimeNumberDecomposition(PrimeRequest) returns (stream PrimeResponse) {};
+
+    // Client Streaming
+    rpc ComputeAverage(stream ComputeAverageRequest) returns (ComputeAverageResponse) {};
+
+    // BiDi Streaming
+    rpc FindMaximum(stream FindMaximumRequest) returns (stream FindMaximumResponse) {};
 }
