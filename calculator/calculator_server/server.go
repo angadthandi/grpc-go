@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"time"
 
 	"github.com/angadthandi/grpc-go/calculator/calculatorpb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type server struct{}
@@ -134,4 +137,23 @@ func (s *server) FindMaximum(
 			max = num
 		}
 	}
+}
+
+func (s *server) SquareRoot(
+	ctx context.Context,
+	req *calculatorpb.SquareRootRequest,
+) (*calculatorpb.SquareRootResponse, error) {
+	fmt.Println("SquareRoot func invoked with unary req")
+
+	num := req.GetNumber()
+	if num < 0 {
+		return nil, status.Errorf(
+			codes.InvalidArgument,
+			fmt.Sprintf("Received a negative number: %v", num),
+		)
+	}
+
+	return &calculatorpb.SquareRootResponse{
+		NumberRoot: float32(math.Sqrt(float64(num))),
+	}, nil
 }
