@@ -13,10 +13,13 @@ import (
 	// "github.com/mongodb/mongo-go-driver/mongo/objectid"
 	// "github.com/mongodb/mongo-go-driver/mongo/options"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var collection *mongo.Collection
@@ -82,4 +85,89 @@ func main() {
 	fmt.Println("Closing MongoDB Connection")
 	mongoDbClient.Disconnect(context.TODO())
 	fmt.Println("End of main program!")
+}
+
+func (s *server) CreateBlog(
+	ctx context.Context,
+	req *blogpb.CreateBlogRequest,
+) (*blogpb.CreateBlogResponse, error) {
+	fmt.Println("create Blog request")
+	blog := req.GetBlog()
+
+	data := blogItem{
+		AuthorID: blog.GetAuthorId(),
+		Title:    blog.GetTitle(),
+		Content:  blog.GetContent(),
+	}
+
+	ret, err := collection.InsertOne(
+		context.Background(), data,
+	)
+	if err != nil {
+		return nil, status.Errorf(
+			codes.Internal,
+			fmt.Sprintf("Internal error: %v", err),
+		)
+	}
+
+	oid, ok := ret.InsertedID.(primitive.ObjectID)
+	if !ok {
+		return nil, status.Errorf(
+			codes.Internal,
+			fmt.Sprintf("Cannot convert to OID: %v", err),
+		)
+	}
+
+	return &blogpb.CreateBlogResponse{
+		Blog: &blogpb.Blog{
+			Id:       oid.Hex(),
+			AuthorId: blog.GetAuthorId(),
+			Title:    blog.GetTitle(),
+			Content:  blog.GetContent(),
+		},
+	}, nil
+}
+
+func (s *server) ReadBlog(
+	ctx context.Context,
+	req *blogpb.ReadBlogRequest,
+) (*blogpb.ReadBlogResponse, error) {
+	fmt.Println("read Blog request")
+
+	blogID := req.GetBlogId()
+
+	oid, err := primitive.ObjectIDFromHex(blogID)
+	if err != nil {
+		return nil, status.Errorf(
+			codes.InvalidArgument,
+			fmt.Sprintf("Cannot parse ID: %v", err),
+		)
+	}
+
+	data := &blogItem{}
+	// filter := bson.NewDocument(
+	// 	bson.EC.ObjectID("_id", oid),
+	// )
+	filter := bson.M{"_id": oid}
+
+	ret := collection.FindOne(
+		context.Background(),
+		filter,
+	)
+
+	if err := ret.Decode(data); err != nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("Cannot find blog with ID: %v", err),
+		)
+	}
+
+	return &blogpb.ReadBlogResponse{
+		Blog: &blogpb.Blog{
+			Id:       data.ID.Hex(),
+			AuthorId: data.AuthorID,
+			Content:  data.Content,
+			Title:    data.Title,
+		},
+	}, nil
 }
