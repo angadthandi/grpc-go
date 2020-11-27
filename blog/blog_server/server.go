@@ -19,6 +19,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 )
 
@@ -64,6 +65,9 @@ func main() {
 	opts := []grpc.ServerOption{}
 	s := grpc.NewServer(opts...)
 	blogpb.RegisterBlogServiceServer(s, &server{})
+
+	// Register reflection service on gRPC server.
+	reflection.Register(s)
 
 	go func() {
 		if err := s.Serve(lis); err != nil {
@@ -163,11 +167,149 @@ func (s *server) ReadBlog(
 	}
 
 	return &blogpb.ReadBlogResponse{
-		Blog: &blogpb.Blog{
-			Id:       data.ID.Hex(),
-			AuthorId: data.AuthorID,
-			Content:  data.Content,
-			Title:    data.Title,
-		},
+		Blog: dataToBlogPb(data),
 	}, nil
+}
+
+func (s *server) UpdateBlog(
+	ctx context.Context,
+	req *blogpb.UpdateBlogRequest,
+) (*blogpb.UpdateBlogResponse, error) {
+	fmt.Println("update Blog request")
+
+	blog := req.GetBlog()
+	oid, err := primitive.ObjectIDFromHex(blog.GetId())
+	if err != nil {
+		return nil, status.Errorf(
+			codes.InvalidArgument,
+			fmt.Sprintf("Cannot parse ID: %v", err),
+		)
+	}
+
+	data := &blogItem{}
+	// filter := bson.NewDocument(
+	// 	bson.EC.ObjectID("_id", oid),
+	// )
+	filter := bson.M{"_id": oid}
+
+	ret := collection.FindOne(
+		context.Background(),
+		filter,
+	)
+
+	if err := ret.Decode(data); err != nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("Cannot find blog with ID: %v", err),
+		)
+	}
+
+	// update internal struct
+	data.AuthorID = blog.GetAuthorId()
+	data.Content = blog.GetContent()
+	data.Title = blog.GetTitle()
+
+	_, err = collection.ReplaceOne(
+		context.Background(),
+		filter,
+		data,
+	)
+	if err != nil {
+		return nil, status.Errorf(
+			codes.Internal,
+			fmt.Sprintf("Cannot update object in mongodb: %v", err),
+		)
+	}
+
+	return &blogpb.UpdateBlogResponse{
+		Blog: dataToBlogPb(data),
+	}, nil
+}
+
+func (s *server) DeleteBlog(
+	ctx context.Context,
+	req *blogpb.DeleteBlogRequest,
+) (*blogpb.DeleteBlogResponse, error) {
+	fmt.Println("delete Blog request")
+
+	blogID := req.GetBlogId()
+	oid, err := primitive.ObjectIDFromHex(blogID)
+	if err != nil {
+		return nil, status.Errorf(
+			codes.InvalidArgument,
+			fmt.Sprintf("Cannot parse ID: %v", err),
+		)
+	}
+
+	filter := bson.M{"_id": oid}
+
+	ret, err := collection.DeleteOne(
+		context.Background(),
+		filter,
+	)
+	if err != nil {
+		return nil, status.Errorf(
+			codes.Internal,
+			fmt.Sprintf("Cannot delete blog in mongodb with ID: %v", blogID),
+		)
+	}
+
+	if ret.DeletedCount == 0 {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("Cannot find blog in mongodb with ID: %v", blogID),
+		)
+	}
+
+	return &blogpb.DeleteBlogResponse{BlogId: blogID}, nil
+}
+
+func (s *server) ListBlog(
+	req *blogpb.ListBlogRequest,
+	stream blogpb.BlogService_ListBlogServer,
+) error {
+	fmt.Println("list Blog stream request")
+
+	cur, err := collection.Find(
+		context.Background(),
+		// nil,
+		primitive.D{{}},
+	)
+	if err != nil {
+		return status.Errorf(
+			codes.Internal,
+			fmt.Sprintf("MongoDB Find error : %v", err),
+		)
+	}
+
+	defer cur.Close(context.Background())
+
+	for cur.Next(context.Background()) {
+		data := &blogItem{}
+		if err := cur.Decode(data); err != nil {
+			return status.Errorf(
+				codes.Internal,
+				fmt.Sprintf("Cannot decode blog from cursor error: %v", err),
+			)
+		}
+
+		stream.Send(&blogpb.ListBlogResponse{Blog: dataToBlogPb(data)})
+	}
+	if err := cur.Err(); err != nil {
+		return status.Errorf(
+			codes.Internal,
+			fmt.Sprintf("MongoDB internal cursor error: %v", err),
+		)
+	}
+
+	return nil
+}
+
+func dataToBlogPb(data *blogItem) *blogpb.Blog {
+	return &blogpb.Blog{
+		Id:       data.ID.Hex(),
+		AuthorId: data.AuthorID,
+		Content:  data.Content,
+		Title:    data.Title,
+	}
 }
